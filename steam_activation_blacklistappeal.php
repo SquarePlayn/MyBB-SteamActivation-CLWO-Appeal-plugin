@@ -81,8 +81,8 @@ function steam_activation_blacklistappeal_info() {
         "description"=> 'This plugin handles the blacklist appeals for the CLWO Community.<br/>Make sure the steam_activation plugin is active and banned users have the permission to view the unban appeal forum.<br/>They do not need post permission as the post will be forced, tho you can choose so turn on that they can reply to their own posts.',
         "website"        => "https://clwo.eu",
         "author"        => "Square Play'n",
-        "authorsite"    => "http://squareplayn.noip.me",
-        "version"        => "1.0",
+        "authorsite"    => "http://squareplayn.com",
+        "version"        => "1.0.1",
         "guid"             => "",
         "codename"      => "steam_activation_blacklistappeal",
         "compatibility" => "18*"
@@ -197,6 +197,21 @@ function steam_activation_blacklistappeal_install() {
             "value"			=> "https://i.giphy.com/IcNPu8F7ZzGOA.gif;https://i.giphy.com/4fNppUBK8Pv0s.gif;https://i.giphy.com/11QzYvIrd3cZpe.gif;https://i.giphy.com/cTO73FiW8U2mA.gif;https://media.giphy.com/media/BeYK3BQtGUvfy/giphy.gif;https://i.giphy.com/AfA6DEFEG8AQU.gif;https://i.giphy.com/MRXfquA4FBg7C.gif;https://i.giphy.com/TDOhmYKZAKr7O.gif;https://i.giphy.com/5XowmFR2jIKJi.gif;https://i.giphy.com/ydJOf0YQaK4tW.gif;https://i.giphy.com/SVdfx9BxP6X6.gif;https://i.giphy.com/vbehqwvns4g5a.gif;https://i.giphy.com/l3V0px8dfZmmfwize.gif;https://media.giphy.com/media/3orifeSGD9fkfc9qLu/giphy.gif;https://media.giphy.com/media/3oriffWTYKfrAVSyk0/giphy.gif;https://media.giphy.com/media/xT5LMFzhBoTY1KI4Bq/giphy.gif;https://i.giphy.com/vcKsGN1BI26gU.gif"
         ),
 
+        "steam_activation_blacklistappeal_enable_slack" => array(
+            "title"         => "Send messages to Slack",
+            "description"   => "Choose whether you want alerts in Slack when a user makes a new appeal.",
+            "optionscode"   => "yesno",
+            "value"         => "1"
+
+        ),
+
+        "steam_activation_blacklistappeal_slack_hook" => array(
+            "title"         => "Slack Hook URL",
+            "description"   => 'Insert a Slack hook url here if you want messages to Slack', 
+            "optionscode"   => "text",
+            "value"         => ""
+        ),
+
         "steam_activation_blacklistappeal_debug" => array(
             "title"         => "Debug messages",
             "description"   => "Turn on debug messages.<br>I hope you do not need this.",
@@ -280,7 +295,7 @@ function steam_activation_blacklistappeal_f_run(){
     steam_activation_blacklistappeal_f_debug("<b>If get request for appeal set:</b>");
     if(isset($mybb->input["appeal"])){
         steam_activation_blacklistappeal_f_debug("<b>Yes->Check if logged in and set up:</b>");
-        if(isset($mybb->user) && isset($mybb->user["steam_activation_steamid"])) {
+        if(isset($mybb->user["steam_activation_steamid"])) {
             steam_activation_blacklistappeal_f_debug("<b>Yes-> check if banned:</b>");
             $steamid = $mybb->user["steam_activation_steamid"];
             if (steam_activation_blacklistappeal_f_checkbanned($steamid)) {
@@ -320,7 +335,7 @@ function steam_activation_blacklistappeal_f_run(){
             steam_activation_blacklistappeal_f_debug("<b>Yes-> Check if user actually has an appeal running:</b>");
             if (steam_activation_blacklistappeal_f_checkrunningappeal($blacklistid)) {
                 steam_activation_blacklistappeal_f_debug("<b>Yes-> Check if user is logged in:</b>");
-                if (isset($mybb->user) && isset($mybb->user["steam_activation_steamid"])) {
+                if (isset($mybb->user["steam_activation_steamid"])) {
                     $adminid = $mybb->user["steam_activation_steamid"];
                     steam_activation_blacklistappeal_f_debug("<b>Yes-> Check if one of the given admins:</b>");
                     if (steam_activation_blacklistappeal_f_checkisadmin($adminid)) {
@@ -575,7 +590,7 @@ function steam_activation_blacklistappeal_f_postappeal($steamid, $blacklistid){
         "lastposttid" => $tid,
         "lastpostsubject" => $subject
     );
-    $db->update_query("forums", $updatedforuminfo);
+    $db->update_query("forums", $updatedforuminfo, 'fid='.$fid);
 
     steam_activation_blacklistappeal_f_debug("Pid: ".$pid.", Tid: ".$tid);
     steam_activation_blacklistappeal_f_debug("Thread and all stuff should be made right now");
@@ -591,8 +606,41 @@ function steam_activation_blacklistappeal_f_postappeal($steamid, $blacklistid){
     );
     $db->insert_query("steam_activation_blacklistappeal", $appealinfo);
 
+    //Send hook to Slack
+    if ($mybb->settings["steam_activation_blacklistappeal_enable_slack"]) {
+        steam_activation_blacklistappeal_f_slack($tid, $username);
+    }
+
     steam_activation_blacklistappeal_f_redirect($mybb->settings["bburl"]."/showthread.php?tid=".$tid);
 }
+
+//Send a message in Slack
+function steam_activation_blacklistappeal_f_slack($tid, $username){
+    global $mybb;
+
+    $service_url = $mybb->settings["steam_activation_blacklistappeal_slack_hook"];
+
+    $data = array("text" => $username ." made a new blacklist appeal https://clwo.eu/thread-".$tid.".html ");
+    $data_string = json_encode($data);
+
+    $curl = curl_init($service_url);
+    curl_setopt($curl, CURLOPT_CUSTOMREQUEST, "POST");
+    curl_setopt($curl, CURLOPT_POSTFIELDS, $data_string);
+    curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($curl, CURLOPT_HTTPHEADER, array(
+            'Content-Type: application/json',
+            'Content-Length: ' . strlen($data_string))
+    );
+    curl_setopt($curl, CURLOPT_TIMEOUT, 5);
+    curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 5);
+
+    //execute post
+    $result = curl_exec($curl);
+    //close connection
+    curl_close($curl);
+
+}
+
 
 //Procedure to keep someone banned
 function steam_activation_blacklistappeal_f_keepbanned($blacklistid, $adminid){
@@ -721,6 +769,7 @@ function steam_activation_blacklistappeal_f_get_userinfo($steamid, $blacklistid)
         "Account id" => $blacklistinfo["AccountID"],
         "Blacklist id" => "[url=https://clwo.eu/jailbreak/admin/view-blacklist.php?AccountID=".$blacklistinfo["AccountID"]."]".$blacklistid."[/url]",
         "Sourcebans" => "[url=http://clwo.eu/sourcebans/index.php?p=banlist&searchText=".$blacklistinfo["cSteamID2"]."]link[/url]",
+        "Profile" => "[url=https://clwo.eu/jailbreak/profile.php?AccountID=".$blacklistinfo["AccountID"]."]link[/url]",
         "Banned on" => $blacklistinfo["BanDateTime"],
         "Expires" => $blacklistinfo["Expires"],
         "Ban reason" => $blacklistinfo["Reason"]
